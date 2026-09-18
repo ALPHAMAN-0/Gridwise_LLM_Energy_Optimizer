@@ -300,6 +300,14 @@ def test_failed_reask_keeps_the_first_answer_uncached(monkeypatch):
     assert len(stub.calls) >= 3  # nothing was cached
 
 
+def test_reask_crash_keeps_the_first_answer(monkeypatch):
+    first = {"items": [raw_item(0, "no_charge_window", [(14, 16)]), raw_item(1, "max_grid_window", [(18, 21)])]}
+    use(monkeypatch, StubLLM(first, RuntimeError("unexpected")))
+    result = asyncio.run(interpret(request(["a", "b"])))
+    assert result[0].structured_adjustment == {"hours": [14, 15]}
+    assert result[1].explanation == UNVALIDATED_EXPLANATION
+
+
 def test_no_reask_when_the_budget_is_nearly_spent(monkeypatch):
     monkeypatch.setattr(interpreter, "get_settings", lambda: settings(llm_total_budget_s=4.0))
     stub = use(monkeypatch, StubLLM({"items": [raw_item(0, "max_grid_window", [(18, 21)])]}))

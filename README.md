@@ -498,7 +498,29 @@ PASS  SAMPLE-01   interp=ok  valid=ok  totals=ok  ratio=1.0000    <latency> ms
 
 The summary block then gives `/health` status, passed and failed counts, `interp`/`valid`/`totals`
 counts out of 10, mean/min/max cost ratio, and latency `p50`, `p95`, and `max`. That last line is the
-source for the `Measured latency` placeholder at the top of this file.
+source for the `Measured latency` line at the top of this file.
+
+Interpretation alone, against hidden-style wording (also calls Gemini; 9 model calls):
+
+```bash
+python scripts/eval_paraphrases.py
+```
+
+It sends the 24 notes in `tests/data/paraphrases.json` through `app.interpreter.interpret`, the same
+code path the API uses, in batches of three like a real request, and prints `PASS`/`FAIL` per note with
+the mismatch (type, hours, or value). These notes were written by an adversarial reviewer to break the
+reader, not tuned to pass: reduction versus remaining ("cut by 60%", "cut to a quarter", "lose a
+third"), spelled-out and 24-hour times, an overnight wrap, open-ended windows ("after 8 PM", "before
+6 AM"), two separate windows in one note, explicit hour slots, and four energy-flavoured distractors
+(solar cleaning *next Tuesday*, a diesel generator test, EV charging bays, a cap that was *lifted*).
+Last live run on the default model cascade: **24/24**, p95 2.2 s.
+
+**Why the model cascade is ordered the way it is.** The defaults in `GEMINI_MODELS` were chosen by
+measurement on the free tier on the day, not by model size. The larger Flash models answered `503` or
+hung past 12 s; `gemini-3.5-flash-lite` answered in about 1.7 s with the same accuracy on both eval
+sets. Each entry is a different model family so that each has its own rate-limit bucket (a `-latest`
+alias shares a bucket with the model it points at, so it adds nothing as a second tier), and the last
+entry is allowed to use the whole remaining time budget because nothing comes after it.
 
 ---
 

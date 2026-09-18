@@ -663,8 +663,8 @@ async def _interpret(request: OptimizeRequest) -> list[DirectiveInterpretation]:
                 SYSTEM_PROMPT, _reask_message(user, problems), RESPONSE_SCHEMA, deadline=deadline
             )
             second, second_problems = _digest(raw_again, n_notes, battery)
-        except LLMError as exc:
-            log.warning("re-ask failed (%s); keeping the first answer", exc)
+        except Exception as exc:  # noqa: BLE001 - a failed re-ask must not cost the first answer
+            log.warning("re-ask failed (%s); keeping the first answer", type(exc).__name__)
         else:
             if not second_problems:
                 # A fully clean answer beats a patched one.
