@@ -554,12 +554,14 @@ live in process memory, and the free instance has 512 MB.
   keys and models softens this; when the budget runs out the service degrades to `no_op` interpretations
   with a valid plan rather than failing.
 - **Infeasible directives.** If a hallucinated or genuinely impossible directive makes the LP infeasible
-  (for example a grid cap below unavoidable demand), the ladder drops directive classes until a plan
-  exists. The response still reports the interpretation exactly as extracted, so the interpretation score
-  is not sacrificed to obtain a plan.
-- **The last-resort fallback plan ignores `max_grid_window`.** It applies solar reductions and keeps the
-  battery idle, which trivially satisfies reserve and charge/discharge windows, but it cannot lower grid
-  import. It is reached only if every solver tier fails.
+  (for example a grid cap below unavoidable demand), the relaxation ladder relaxes grid caps and
+  reserves by the fewest kWh possible; `plan_summary` says so. Charge/discharge windows, solar
+  reductions, and every physical rule stay hard. The response still reports the interpretation exactly
+  as extracted, so the interpretation score is not sacrificed to obtain a plan.
+- **The last-resort fallback plan ignores `max_grid_window` and reserves above the starting level.** It
+  applies solar reductions and keeps the battery idle, which satisfies charge/discharge windows and
+  neutrality by construction, but it cannot lower grid import or raise stored energy. It is reached only
+  if no solver works or the 25 s deadline fires.
 - **Battery model** follows the problem statement: no round-trip losses, no self-discharge, one action
   per hour.
 - **The cache is per process and in memory.** It is empty after a restart and is not shared between
