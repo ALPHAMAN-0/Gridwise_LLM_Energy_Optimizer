@@ -51,7 +51,7 @@ _GRID = re.compile(r"\b(?:grid|feeder|transformer|substation|utility|mains|impor
 _RESERVE_CUE = re.compile(
     r"\b(?:keep|kept|hold|held|retain\w*|maintain\w*|preserve\w*|reserve[ds]?|remain\w*|stay\w*|sits?"
     r"|at\s+least|no\s+less\s+than|not\s+less\s+than|minimum|above|or\s+(?:better|more|higher)"
-    r"|(?:drop|fall|dip|slip|go|sink|run)\w*\s+(?:below|under))\b"
+    r"|below|under)\b"
 )
 _CAP_CUE = re.compile(
     r"\b(?:exceed\w*|at\s+or\s+(?:below|under)|limit\w*|cap(?:s|ped|ping)?|no\s+more\s+than"
@@ -102,7 +102,9 @@ _LOST_BEFORE = re.compile(
 _LEFT_BEFORE = re.compile(
     rf"\b(?:to|at|as|only|just|leave|leaves|leaving|manage|manages|deliver\w*|produc\w+)\s+{_HEDGE}$"
 )
-_LOST_AFTER = re.compile(r"\s*(?:\w+\s+){0,2}?(?:reduction|drop|cut|loss|less|lower|decrease|derat\w+)\b")
+_LOST_AFTER = re.compile(
+    r"\s*(?:\w+\s+){0,3}?(?:reduction|drop|cut|loss|less|lower|decrease|derat\w+|offline|shaded|unavailable)\b"
+)
 _LEFT_AFTER = re.compile(
     r"\s*(?:of\s+(?:the\s+|its\s+|their\s+|our\s+)?(?:forecast\w*|normal|usual|expected|rated|predicted)"
     r"|usable|available|remain\w*|output|capacity)\b"
@@ -131,7 +133,7 @@ def _atom(tag: str) -> str:
     """Regex for one clock time; group names carry `tag` so two fit in one pattern."""
     words = "|".join([*_WORD_HOURS, *_FIXED_WORDS])
     return (
-        rf"(?:(?<![\d.:])(?P<h{tag}>\d{{1,2}})(?::(?P<m{tag}>[0-5]\d))?(?:\s*(?P<ap{tag}>[ap]m)\b)?"
+        rf"(?:(?<![\d.:])(?P<h{tag}>\d{{1,2}})(?::(?P<m{tag}>[0-5]\d)(?:\s*hrs?\b)?)?(?:\s*(?P<ap{tag}>[ap]m)\b)?"
         rf"(?![\d:a-z]|\.\d)|\b(?P<w{tag}>{words})\b)(?:\s+o'?clock)?"
         rf"(?:\s+(?:in\s+the\s+|this\s+)?(?P<part{tag}>morning|afternoon|evening|tonight)\b)?{_NOT_A_UNIT}"
     )
