@@ -22,14 +22,19 @@ from pathlib import Path
 # the file, which crashes under some launchers (frozen apps, `python -c`).
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
+# Chosen by measurement on the free tier (2026-09-18), not by model size: the
+# larger Flash models answered 503 or hung past 12 s, flash-lite answered in
+# about 1.7 s with the same accuracy on our eval set. Each entry is a different
+# model family so that each has its own rate-limit bucket; `-latest` aliases
+# share a bucket with the model they point at and add nothing.
 DEFAULT_GEMINI_MODELS: tuple[str, ...] = (
     "gemini-3.5-flash-lite",
+    "gemini-3-flash-preview",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
 )
 DEFAULT_THINKING_LEVEL = "low"
 DEFAULT_LLM_CALL_TIMEOUT_S = 7.0
-DEFAULT_LLM_TOTAL_BUDGET_S = 14.0
+DEFAULT_LLM_TOTAL_BUDGET_S = 18.0
 DEFAULT_LLM_MAX_CONCURRENCY = 4
 DEFAULT_CACHE_SIZE = 512
 DEFAULT_PORT = 8000

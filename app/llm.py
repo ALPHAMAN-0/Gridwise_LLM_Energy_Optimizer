@@ -19,6 +19,7 @@ import asyncio
 import itertools
 import json
 import logging
+import math
 import time
 from typing import Any
 
@@ -311,6 +312,12 @@ async def _attempt(
 # --------------------------------------------------------------------------
 
 
+def _call_timeout(per_call_s: float, left_s: float, *, last_attempt: bool) -> float:
+    if last_attempt and math.isfinite(left_s):
+        return left_s
+    return min(per_call_s, left_s)
+
+
 async def generate_json(
     system: str,
     user: str,
@@ -354,7 +361,10 @@ async def generate_json(
     last_reason = "no attempt made"
     try:
         client = _get_client()
-        for model in models:
+        for position, model in enumerate(models):
+            # Nothing comes after the last model, so holding back budget for a
+            # later attempt would only turn a slow answer into no answer.
+            is_last_model = position == len(models) - 1
             for offset in range(len(keys)):
                 left = remaining()
                 if left < _MIN_CALL_S:
@@ -369,7 +379,11 @@ async def generate_json(
                         system=system,
                         user=user,
                         schema=schema,
-                        timeout_s=min(settings.llm_call_timeout_s, left),
+                        timeout_s=_call_timeout(
+                            settings.llm_call_timeout_s,
+                            left,
+                            last_attempt=is_last_model and offset == len(keys) - 1,
+                        ),
                     )
                 except _Skip as skip:
                     last_reason = f"{model}: {skip.reason}"

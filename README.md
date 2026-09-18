@@ -14,7 +14,8 @@ before it is returned. The service always answers with a valid plan, even when t
 | Optimize endpoint | `POST <PUBLIC_BASE_URL>/optimize-energy` |
 | Source | https://github.com/ALPHAMAN-0/Gridwise_LLM_Energy_Optimizer |
 | Container image | `ghcr.io/alphaman-0/gridwise-llm-energy-optimizer:v1.0.0` |
-| Measured latency | Measured latency: <to be filled from scripts/run_samples.py> |
+
+Measured latency: <to be filled from scripts/run_samples.py>
 
 Contents: [Architecture](#architecture) | [Why this split](#why-this-split) | [Guardrails](#guardrails) |
 [Optimization method](#optimization-method) | [Reliability](#reliability) | [Quickstart](#quickstart-local) |
@@ -95,7 +96,7 @@ HTTP 200  (totals recomputed from the returned hourly_plan, never from the solve
 | `app/schemas.py` | Pydantic v2 request/response models, directive type whitelist, exact `structured_adjustment` key sets, judge tolerance (0.01). |
 | `app/config.py` | Reads every environment variable once (keys, model cascade, timeouts, cache size, port, log level). |
 | `app/llm.py` | Gemini REST client (`generateContent`) over httpx: structured output, model cascade, key rotation, per-call timeout, global budget. |
-| `app/interpreter.py` | Prompt + response schema, the single LLM call for all notes, and the deterministic normalization of the intermediate form. |
+| `app/interpreter.py` | Prompt + response schema, the single LLM call for all notes, deterministic normalization of the intermediate form, the one re-ask, and the in-memory cache of validated interpretations. |
 | `app/guardrails.py` | Validates every interpretation entry; triggers one re-ask; demotes anything still invalid to `no_op`. |
 | `app/directives.py` | Folds the validated directives into five 24-long constraint arrays. Pure arithmetic. |
 | `app/optimizer.py` | Builds and solves the LP, picks the solver, post-processes the solution into `hourly_plan` rows. |
@@ -145,14 +146,18 @@ Applied to every entry after normalization, before anything reaches the optimize
 
 - `directive_type` must be one of the six allowed values: `solar_reduction`, `minimum_battery_reserve`,
   `no_charge_window`, `no_discharge_window`, `max_grid_window`, `no_op`. Nothing else is ever emitted.
-- Exactly one entry per operator note, in `note_index` order `0..N-1`. Missing, duplicated, or
-  out-of-range indexes are repaired to that shape.
-- `hours` is a non-empty list of unique, ascending integers in `0..23`.
+- Exactly one entry per operator note, in `note_index` order `0..N-1`. An out-of-range index is
+  discarded, a duplicate is ignored (first valid entry wins), and a missing note gets a `no_op`.
+- `hours` is a non-empty list of integers in `0..23` (booleans and numeric strings are rejected),
+  emitted unique and ascending.
 - `factor` is finite and within `[0, 1]`.
 - `minimum_energy_kwh` is finite and within `[0, capacity_kwh]`.
 - `max_grid_kwh` is finite and non-negative.
-- `applies` / null semantics: `no_op` has `applies: false` and `structured_adjustment: null`; every
-  other type has `applies: true` and a non-null adjustment.
+- `applies` / null semantics are forced, not trusted: `no_op` always has `applies: false` and
+  `structured_adjustment: null`; every other type always has `applies: true` and a non-null adjustment.
+- `explanation` is always a non-empty single-line string, at most 300 characters.
+- The model output is treated as hostile input: it may not be a list, entries may not be objects, and
+  numbers may be strings, `NaN`, or `Infinity`. The gate itself never raises.
 - Exact key sets per type, no extras and none missing:
 
 | `directive_type` | `structured_adjustment` keys |
@@ -307,7 +312,8 @@ docker build --platform linux/amd64 -t gridwise-llm-energy-optimizer:local .
 docker run --rm -p 8000:8000 --env-file .env gridwise-llm-energy-optimizer:local
 ```
 
-`--env-file` does not strip quotes, so write `.env` values without quotes when using it, or pass
+Docker's `--env-file` parser is stricter than python-dotenv: it keeps quotes as part of the value and
+rejects spaces around `=`. Write `NAME=value` with no quotes and no spaces when using it, or pass
 `-e GEMINI_API_KEYS=<your-key>` instead.
 
 A different port: `docker run --rm -e PORT=9000 -p 9000:9000 -e GEMINI_API_KEYS=<your-key> ghcr.io/alphaman-0/gridwise-llm-energy-optimizer:v1.0.0`
@@ -329,10 +335,10 @@ An unparsable or out-of-range value falls back to its default instead of stoppin
 |---|---|---|
 | `GEMINI_API_KEYS` | none | Comma-separated list of Gemini API keys. Preferred. Keys are rotated on 429, 5xx, and timeout. Keys from the same Google Cloud project share one quota, so extra keys only help if they come from different projects. One key is enough. |
 | `GEMINI_API_KEY` | none | Single-key name, also honoured. If both are set the lists are merged and de-duplicated. |
-| `GEMINI_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite` | Comma-separated Gemini model ids, tried left to right when a model errors or is rate limited. |
+| `GEMINI_MODELS` | `gemini-3.5-flash-lite,gemini-3-flash-preview,gemini-3.1-flash-lite` | Comma-separated Gemini model ids, tried left to right when a model errors or is rate limited. |
 | `GEMINI_THINKING_LEVEL` | `low` | Thinking level requested from the model. Set to an empty string to send no thinking config at all. |
 | `LLM_CALL_TIMEOUT_S` | `7` | Timeout in seconds for a single Gemini HTTP call. |
-| `LLM_TOTAL_BUDGET_S` | `14` | Wall-clock budget in seconds for all LLM attempts within one request (cascade, rotation, and re-ask combined). |
+| `LLM_TOTAL_BUDGET_S` | `18` | Wall-clock budget in seconds for all LLM attempts within one request (cascade, rotation, and re-ask combined). |
 | `LLM_MAX_CONCURRENCY` | `4` | Maximum simultaneous outbound LLM calls across all in-flight requests. |
 | `CACHE_SIZE` | `512` | Maximum entries in the in-memory cache of validated interpretations. |
 | `PORT` | `8000` | Port the server binds inside the container. Render injects its own value. |
@@ -451,13 +457,18 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-The test suite needs no API key and no network; wherever the interpreter is exercised the Gemini client
-is stubbed. It checks that the LP matches the reference optimal cost on all 10 public samples under both
-CBC and HiGHS, that decimal-perturbed (fuzzed) inputs still produce plans that pass the independent
-validator and beat the fallback plan, that zero-valued and overlapping directives bind correctly, and
-that an infeasible strict model yields the minimal-violation elastic plan. `tests/data/paraphrases.json`
-holds 24 hand-written paraphrased notes (24-hour clock, "PV" synonyms, "cut by 60%" versus "60% of")
-with their expected type, hours, and value.
+The test suite needs no API key and no network; the language model is always stubbed. It checks:
+
+- **Solver** (`tests/test_optimizer_samples.py`): the LP matches the reference optimal cost on all 10
+  public samples under both CBC and HiGHS; decimal-perturbed (fuzzed) inputs still produce plans that
+  pass the independent validator and beat the fallback plan; zero-valued and overlapping directives
+  bind correctly; an infeasible strict model yields the minimal-violation elastic plan.
+- **HTTP contract** (`tests/test_api.py`): `/health`; the full response for every public sample; valid
+  JSON accepted whatever the `Content-Type`; extra fields and unordered hours tolerated; structurally
+  invalid bodies get 400; an impossible battery state gets 422; an interpreter crash still returns a
+  valid plan with HTTP 200; an unhandled error is a controlled 500 with no traceback.
+- `tests/data/paraphrases.json` holds 24 hand-written paraphrased notes (24-hour clock, "PV" synonyms,
+  "cut by 60%" versus "60% of") with their expected type, hours, and value.
 
 End-to-end against a running server (this path does call Gemini, so the server needs a key):
 
@@ -486,10 +497,8 @@ PASS  SAMPLE-01   interp=ok  valid=ok  totals=ok  ratio=1.0000    <latency> ms
 | last column | Wall-clock latency of the request in milliseconds, followed by the first error if there is one. |
 
 The summary block then gives `/health` status, passed and failed counts, `interp`/`valid`/`totals`
-counts out of 10, mean/min/max cost ratio, and latency `p50`, `p95`, and `max`. Copy the latency line
-into the table at the top of this file.
-
-Measured latency: <to be filled from scripts/run_samples.py>
+counts out of 10, mean/min/max cost ratio, and latency `p50`, `p95`, and `max`. That last line is the
+source for the `Measured latency` placeholder at the top of this file.
 
 ---
 
@@ -532,7 +541,10 @@ live in process memory, and the free instance has 512 MB.
 
 - The Gemini key is sent only in the `x-goog-api-key` request header. It is never placed in a URL or
   query string, so it cannot appear in access logs, proxies, or exception messages that include a URL.
-- Keys are never logged, and error responses never include upstream response bodies or stack traces.
+- Keys are never logged. LLM log lines carry only the model name, the key's *index*, the HTTP status,
+  elapsed milliseconds, and the exception class name; never a URL, header, body, or httpx exception
+  text. The settings object masks keys in its `repr`, and `httpx` request logging is silenced.
+- Error responses never include upstream response bodies, the request body, or stack traces.
 - `.env` is gitignored (`.env`, `.env.*`, with `.env.example` explicitly allowed).
 - `.dockerignore` excludes `.env`, and the Dockerfile copies only `requirements.txt` and `app/`, so a
   local `.env` cannot end up in an image layer. Secrets reach the container only as runtime
