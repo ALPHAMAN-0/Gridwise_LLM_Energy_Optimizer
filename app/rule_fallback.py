@@ -19,7 +19,7 @@ unit), so its output goes through `interpreter.normalize_item` and
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
 
 _SUFFIX = "(rule-based reading; language model unavailable)"
 _MAX_NOTE_CHARS = 1200  # bounds regex work on a hostile body
@@ -45,7 +45,7 @@ _UNMODELLED = re.compile(
 # -- directive evidence ------------------------------------------------------
 
 _SOLAR = re.compile(r"\b(?:solar|pv|photovoltaic|panels?|array|rooftop\s+generation)\b")
-_BATTERY = re.compile(r"\b(?:battery|batteries|storage|stored\s+energy|state\s+of\s+charge|soc|bess)\b")
+_BATTERY = re.compile(r"\b(?:battery|batteries|storage|stored\s+energy|state\s+of\s+charge|soc|bess|in\s+reserve)\b")
 _GRID = re.compile(r"\b(?:grid|feeder|transformer|substation|utility|mains|import\w*|intake)\b")
 
 _RESERVE_CUE = re.compile(
@@ -55,7 +55,7 @@ _RESERVE_CUE = re.compile(
 )
 _CAP_CUE = re.compile(
     r"\b(?:exceed\w*|at\s+or\s+(?:below|under)|limit\w*|cap(?:s|ped|ping)?|no\s+more\s+than"
-    r"|not\s+more\s+than|below|under|maximum|max|restrict\w*|ceiling|up\s+to)\b"
+    r"|not\s+more\s+than|below|under|maximum|max|restrict\w*|ceiling|up\s+to|can\s+only)\b"
 )
 _BLOCKED = (
     r"(?:isolated|unavailable|disabled|locked\s+out|offline|out\s+of\s+service|prohibited|suspended"
@@ -74,7 +74,7 @@ _NO_DISCHARGE = re.compile(
     rf"\b{_NEGATION}\s+(?:battery\s+)?discharg\w+"
     rf"|\bdischarg\w+\b[^.;]{{0,40}}?\b{_BLOCKED}"
     rf"|\b{_NEGATION}\s+(?:be\s+)?draw\w*\s+(?:from|on|down)\s+(?:the\s+)?(?:battery|batteries|storage)"
-    rf"|\b(?:battery|inverter|storage)\s+output\b[^.;]{{0,40}}?\b{_BLOCKED}"
+    rf"|\b(?:battery|inverter|storage)\s+(?:output|export)\b[^.;]{{0,40}}?\b{_BLOCKED}"
     r"|\bhold\s+the\s+charge\b"
 )
 _SOLAR_OFF = re.compile(
@@ -97,7 +97,8 @@ _SHARE = re.compile(
 _HEDGE = r"(?:(?:about|around|roughly|approximately|nearly|almost|only|just|some|an?)\s+)*"
 # The preposition decides: "down BY 30%" is lost, "down TO 30%" is what is left.
 _LOST_BEFORE = re.compile(
-    rf"\b(?:by|lose|loses|losing|lost|loss\s+of|drop\s+of|cut\s+of|reduction\s+of|down|shed|sheds)\s+{_HEDGE}$"
+    rf"\b(?:by|lose|loses|losing|lost|loss\s+of|drop\s+of|cut\s+of|reduction\s+of|down|sheds?"
+    rf"|reduced|cuts?|lowered|decreased|drops?|dropped|falls?|fell)\s+{_HEDGE}$"
 )
 _LEFT_BEFORE = re.compile(
     rf"\b(?:to|at|as|only|just|leave|leaves|leaving|manage|manages|deliver\w*|produc\w+)\s+{_HEDGE}$"
@@ -109,9 +110,8 @@ _LEFT_AFTER = re.compile(
     r"\s*(?:of\s+(?:the\s+|its\s+|their\s+|our\s+)?(?:forecast\w*|normal|usual|expected|rated|predicted)"
     r"|usable|available|remain\w*|output|capacity)\b"
 )
-_NOT_A_SHARE_AFTER = re.compile(r"\s*(?:chance|probability|likelihood)\b")
 _OF_CAPACITY_AFTER = re.compile(
-    r"\s*(?:of\s+(?:the\s+|its\s+|total\s+|rated\s+|usable\s+)*(?:battery|capacity|storage|charge)"
+    r"\s*(?:(?:of\s+)?(?:the\s+|its\s+|total\s+|rated\s+|usable\s+)*(?:battery|capacity|storage|charge)"
     r"|full\b|charged?\b|capacity\b|soc\b|state\s+of\s+charge)"
 )
 _CHARGE_LEVEL_BEFORE = re.compile(r"\b(?:battery|storage|charge|soc)\b[^.;%]{0,30}$")
@@ -134,7 +134,7 @@ def _atom(tag: str) -> str:
     words = "|".join([*_WORD_HOURS, *_FIXED_WORDS])
     return (
         rf"(?:(?<![\d.:])(?P<h{tag}>\d{{1,2}})(?::(?P<m{tag}>[0-5]\d)(?:\s*hrs?\b)?)?(?:\s*(?P<ap{tag}>[ap]m)\b)?"
-        rf"(?![\d:a-z]|\.\d)|\b(?P<w{tag}>{words})\b)(?:\s+o'?clock)?"
+        rf"(?![\da-z]|[.:]\d)|\b(?P<w{tag}>{words})\b)(?:\s+o'?clock)?"
         rf"(?:\s+(?:in\s+the\s+|this\s+)?(?P<part{tag}>morning|afternoon|evening|tonight)\b)?{_NOT_A_UNIT}"
     )
 
@@ -242,18 +242,14 @@ def _read_slots(match: re.Match[str]) -> list[Window]:
 
 def _windows(text: str) -> list[Window]:
     found: list[Window] = []
-
-    def consume(reader: Callable[[re.Match[str]], list[Window]]) -> Callable[[re.Match[str]], str]:
-        def replace(match: re.Match[str]) -> str:
+    for pattern, reader in ((_SLOTS, _read_slots), (_RANGE, _read_range), (_OPEN, _read_open)):
+        for match in list(pattern.finditer(text)):
             windows = reader(match)
             found.extend(window for window in windows if window not in found)
-            # Blank what was read so "until 8 PM" inside a range is not re-read as open-ended.
-            return " " * len(match.group(0)) if windows else match.group(0)
-
-        return replace
-
-    for pattern, reader in ((_SLOTS, _read_slots), (_RANGE, _read_range), (_OPEN, _read_open)):
-        text = pattern.sub(consume(reader), text)
+            if windows:
+                # Blank what was read (same length, so later spans still line up) so that
+                # "until 8 PM" inside a range is not re-read as an open-ended window.
+                text = text[: match.start()] + " " * len(match.group(0)) + text[match.end() :]
     if not found and _ALL_DAY.search(text):
         found.append((0, 24))
     return found
@@ -278,8 +274,6 @@ def _solar_amount(text: str) -> tuple[float, str] | None:
     shares = [match for match in _SHARE.finditer(text) if _share_value(match) <= 100.0]
     for match in shares:
         before, after = _around(text, match)
-        if _NOT_A_SHARE_AFTER.match(after):
-            continue
         if match.group("halved"):
             return 50.0, "remaining"
         # Words before the figure ("by", "to") outrank words after it ("of the forecast").
@@ -305,6 +299,25 @@ def _single_quantity(text: str, *, allow_power: bool) -> float | None:
     return values.pop() if len(values) == 1 else None
 
 
+def _figure_owner(text: str) -> str | None:
+    """Which subject the note's kWh figure belongs to: the nearest one before it, else the first after.
+
+    "The battery must not drop below 120 kWh in case the feeder trips" has a
+    battery, a grid word, a limit word and a figure; only position tells the
+    reserve from the grid cap. A figure that follows "solar" is neither.
+    """
+    figure = _QUANTITY.search(text)
+    if figure is None:
+        return None
+    before, after = text[: figure.start()], text[figure.end() :]
+    subjects = {"battery": _BATTERY, "grid": _GRID, "solar": _SOLAR}
+    last = {name: max((m.start() for m in rx.finditer(before)), default=-1) for name, rx in subjects.items()}
+    if max(last.values()) >= 0:
+        return max(last, key=last.__getitem__)
+    first = {name: min((m.start() for m in rx.finditer(after)), default=len(text)) for name, rx in subjects.items()}
+    return min(first, key=first.__getitem__)
+
+
 def _reserve_amount(text: str) -> tuple[float, str] | None:
     energy = _single_quantity(text, allow_power=False)
     if energy is not None:
@@ -322,7 +335,7 @@ def _reserve_amount(text: str) -> tuple[float, str] | None:
 
 def _normalise(note: str) -> str:
     text = note[:_MAX_NOTE_CHARS].lower()
-    text = re.sub(r"[‐-―−]", "-", text).replace("’", "'")
+    text = re.sub("[\u2010-\u2015\u2212]", "-", text).replace("\u2019", "'")  # typographic dashes, apostrophe
     text = re.sub(r"(?<![a-z])([ap])\.\s?m\b\.?", r"\1m", text)  # "p.m." -> "pm"
     text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)  # "1,200 kWh"
     # "0900-1200 hrs" -> "09:00-12:00": the unit marks the last time, which then marks the first.
@@ -337,16 +350,21 @@ def _candidates(text: str) -> dict[str, dict[str, Any]]:
     if solar:
         found["solar_reduction"] = {"solar_percent": solar[0], "solar_percent_is": solar[1]}
     reserve = _reserve_amount(text) if _BATTERY.search(text) and _RESERVE_CUE.search(text) else None
+    cap = _single_quantity(text, allow_power=True) if _GRID.search(text) and _CAP_CUE.search(text) else None
+    owner = _figure_owner(text)
+    if reserve and reserve[1] == "kwh" and owner != "battery":
+        reserve = None
+    if owner != "grid":
+        cap = None
     if reserve:
         found["minimum_battery_reserve"] = {"reserve_value": reserve[0], "reserve_unit": reserve[1]}
+    if cap is not None:
+        found["max_grid_window"] = {"max_grid_kwh": cap}
     if _NO_CHARGE.search(text):
         found["no_charge_window"] = {}
     # "Keep at least X in the battery, do not discharge below it" is a reserve.
     if _NO_DISCHARGE.search(text) and not reserve:
         found["no_discharge_window"] = {}
-    cap = _single_quantity(text, allow_power=True) if _GRID.search(text) and _CAP_CUE.search(text) else None
-    if cap is not None:
-        found["max_grid_window"] = {"max_grid_kwh": cap}
     return found
 
 
@@ -365,18 +383,19 @@ def _no_op(index: int, reason: str) -> dict:
     return _item(index, "no_op", reason, [], {})
 
 
+_EXPLANATIONS = {
+    "solar_reduction": "Forecast solar is limited ({solar_percent:g}% {solar_percent_is}) during {span}",
+    "minimum_battery_reserve": "The battery must hold at least {reserve_value:g} {unit} during {span}",
+    "no_charge_window": "The battery must not be charged during {span}",
+    "no_discharge_window": "The battery must not be discharged during {span}",
+    "max_grid_window": "Grid import is capped at {max_grid_kwh:g} kWh per hour during {span}",
+}
+
+
 def _describe(directive_type: str, numbers: dict[str, Any], windows: list[Window]) -> str:
     span = " and ".join(f"{start:02d}:00-{end:02d}:00" for start, end in windows)
-    if directive_type == "solar_reduction":
-        verb = "remains" if numbers["solar_percent_is"] == "remaining" else "is lost"
-        return f"{numbers['solar_percent']:g}% of forecast solar {verb} during {span}"
-    if directive_type == "minimum_battery_reserve":
-        unit = "kWh" if numbers["reserve_unit"] == "kwh" else "% of capacity"
-        return f"The battery must hold at least {numbers['reserve_value']:g} {unit} during {span}"
-    if directive_type == "max_grid_window":
-        return f"Grid import is capped at {numbers['max_grid_kwh']:g} kWh per hour during {span}"
-    flow = "charged" if directive_type == "no_charge_window" else "discharged"
-    return f"The battery must not be {flow} during {span}"
+    unit = "kWh" if numbers.get("reserve_unit") == "kwh" else "% of capacity"
+    return _EXPLANATIONS[directive_type].format(**numbers, span=span, unit=unit)
 
 
 def _read_one(index: int, note: Any) -> dict:
