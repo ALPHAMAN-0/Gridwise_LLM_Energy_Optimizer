@@ -325,7 +325,7 @@ def _normalise(note: str) -> str:
     text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)  # "1,200 kWh"
     # "0900-1200 hrs" -> "09:00-12:00": the unit marks the last time, which then marks the first.
     text = re.sub(r"\b([01]\d|2[0-4])([0-5]\d)(?=\s*(?:hrs?|hours|h)\b)", r"\1:\2", text)
-    return re.sub(r"\b([01]\d|2[0-4])([0-5]\d)(?=\s*(?:-|to|until|till)\s*\d{1,2}:\d\d)", r"\1:\2", text)
+    return re.sub(r"\b([01]\d|2[0-4])([0-5]\d)(?=\s*(?:-|to|until|till|through|and)\s*\d{1,2}:\d\d)", r"\1:\2", text)
 
 
 def _candidates(text: str) -> dict[str, dict[str, Any]]:
