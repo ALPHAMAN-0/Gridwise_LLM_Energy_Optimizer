@@ -1,0 +1,23 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Solver artifacts
+*.lp
+*.mps
+*.sol
+
+# OS / editor
+.DS_Store
+.puku/
+.idea/
+.vscode/
