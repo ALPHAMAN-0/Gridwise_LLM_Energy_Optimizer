@@ -280,13 +280,14 @@ def _solar_amount(text: str) -> tuple[float, str] | None:
             continue
         if match.group("halved"):
             return 50.0, "remaining"
-        for pattern, where, mode in (
-            (_LOST_BEFORE, before, "reduction"),
-            (_LEFT_BEFORE, before, "remaining"),
-            (_LOST_AFTER, after, "reduction"),
-            (_LEFT_AFTER, after, "remaining"),
+        # Words before the figure ("by", "to") outrank words after it ("of the forecast").
+        for hit, mode in (
+            (_LOST_BEFORE.search(before), "reduction"),
+            (_LEFT_BEFORE.search(before), "remaining"),
+            (_LOST_AFTER.match(after), "reduction"),
+            (_LEFT_AFTER.match(after), "remaining"),
         ):
-            if pattern.search(where) if where is before else pattern.match(where):
+            if hit:
                 return _share_value(match), mode
     # A share with no clear direction is not guessed, even if "offline" also appears.
     return (0.0, "remaining") if not shares and _SOLAR_OFF.search(text) else None
