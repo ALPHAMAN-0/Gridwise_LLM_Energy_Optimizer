@@ -1,0 +1,152 @@
+name: image
+
+# Build the API image, prove it actually serves a request, and only then push
+# it to GHCR. A broken image must never replace :latest.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # GHCR image names must be lowercase.
+  IMAGE: ghcr.io/alphaman-0/gridwise-llm-energy-optimizer
+  VERSION: v1.0.0
+  LOCAL_TAG: gridwise:ci
+  SAMPLES: ProblemSet/BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (linux/amd64, loaded into the local daemon)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          # The docker exporter cannot load an attestation manifest list.
+          provenance: false
+          tags: ${{ env.LOCAL_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (no API key on purpose)
+        run: |
+          set -euo pipefail
+
+          # The service must start and answer without any Gemini key: with no
+          # key every note degrades to no_op and the solver still plans the day.
+          docker run -d --name gridwise-smoke -p 8000:8000 "$LOCAL_TAG"
+
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8000/health 2>/dev/null \
+              | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "ok" else 1)' 2>/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$healthy" -ne 1 ]; then
+            echo "::error::/health did not return status ok within 60 s"
+            exit 1
+          fi
+          echo "/health ok"
+
+          if [ ! -f "$SAMPLES" ]; then
+            echo "::warning::$SAMPLES is not in the repository; skipping the POST /optimize-energy check"
+            exit 0
+          fi
+
+          python3 - "$SAMPLES" "$RUNNER_TEMP/sample_input.json" <<'PY'
+          import json, sys
+          pack = json.load(open(sys.argv[1], encoding="utf-8"))
+          json.dump(pack["cases"][0]["input"], open(sys.argv[2], "w", encoding="utf-8"))
+          PY
+
+          code=$(curl -sS -o "$RUNNER_TEMP/response.json" -w '%{http_code}' --max-time 60 \
+            -H 'content-type: application/json' \
+            --data-binary "@$RUNNER_TEMP/sample_input.json" \
+            http://127.0.0.1:8000/optimize-energy)
+          if [ "$code" != "200" ]; then
+            echo "::error::POST /optimize-energy returned HTTP $code"
+            head -c 2000 "$RUNNER_TEMP/response.json" || true
+            exit 1
+          fi
+
+          python3 - "$RUNNER_TEMP/sample_input.json" "$RUNNER_TEMP/response.json" <<'PY'
+          import json, sys
+          sent = json.load(open(sys.argv[1], encoding="utf-8"))
+          got = json.load(open(sys.argv[2], encoding="utf-8"))
+          plan = got.get("hourly_plan")
+          assert isinstance(plan, list) and len(plan) == 24, f"hourly_plan has {len(plan or [])} entries, expected 24"
+          assert got.get("scenario_id") == sent["scenario_id"], f"scenario_id not echoed: {got.get('scenario_id')!r}"
+          print("POST /optimize-energy ok:", got["scenario_id"], "total_cost_bdt =", got.get("total_cost_bdt"))
+          PY
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs gridwise-smoke || true
+
+      - name: Stop smoke container
+        if: always()
+        run: docker rm -f gridwise-smoke || true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Same builder, same context: every layer is a cache hit, so this step
+      # only uploads. Using the action (not `docker push`) yields the digest.
+      - name: Push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          # Plain single-platform manifest: the digest below is the image itself.
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:${{ env.VERSION }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:sha-${{ steps.sha.outputs.short }}
+          cache-from: type=gha
+
+      - name: Summary
+        run: |
+          {
+            echo "### Pushed image"
+            echo ""
+            echo "- \`${IMAGE}:${VERSION}\`"
+            echo "- \`${IMAGE}:latest\`"
+            echo "- \`${IMAGE}:sha-${{ steps.sha.outputs.short }}\`"
+            echo ""
+            echo "Digest: \`${{ steps.push.outputs.digest }}\`"
+            echo ""
+            echo "Pull by digest: \`docker pull ${IMAGE}@${{ steps.push.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

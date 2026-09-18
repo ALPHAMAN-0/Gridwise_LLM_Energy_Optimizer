@@ -7,9 +7,10 @@ range. This module only does arithmetic.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Iterable, Mapping
 
-from .schemas import Constraints, HourPlan, OptimizeRequest
+from .schemas import Constraints, OptimizeRequest
 
 
 def _rows(directives: Iterable[Any]) -> list[dict[str, Any]]:
@@ -20,6 +21,24 @@ def _rows(directives: Iterable[Any]) -> list[dict[str, Any]]:
         elif hasattr(d, "model_dump"):
             out.append(d.model_dump())
     return out
+
+
+_VALUE_KEY = {
+    "solar_reduction": "factor",
+    "minimum_battery_reserve": "minimum_energy_kwh",
+    "max_grid_window": "max_grid_kwh",
+}
+
+
+def _value_for(kind: Any, adjustment: Mapping[str, Any]) -> float:
+    """The one number a directive carries (0.0 for the window-only types)."""
+    key = _VALUE_KEY.get(kind)
+    if key is None:
+        return 0.0
+    raw = adjustment[key]
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+        raise ValueError(key)
+    return float(raw)
 
 
 def build_constraints(
@@ -49,18 +68,33 @@ def build_constraints(
     for row in _rows(directives):
         kind = row.get("directive_type")
         adjustment = row.get("structured_adjustment")
-        if kind == "no_op" or not isinstance(adjustment, Mapping):
+        if kind == "no_op" or row.get("applies") is False or not isinstance(adjustment, Mapping):
             continue
-        listed = [h for h in adjustment.get("hours", []) if isinstance(h, int) and 0 <= h <= 23]
+        # bool is an int in Python; True must not quietly become hour 1.
+        listed = sorted(
+            {
+                h
+                for h in adjustment.get("hours") or []
+                if isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= 23
+            }
+        )
+        try:
+            value = _value_for(kind, adjustment)
+        except (KeyError, TypeError, ValueError):
+            # Guardrails run first, so this should be unreachable; a row that
+            # slips through is skipped rather than turned into a 500.
+            continue
 
         if kind == "solar_reduction" and apply_solar:
-            factor = float(adjustment["factor"])
+            factor = value
             for h in listed:
-                # Lowest factor wins where windows overlap.
-                effective_solar[h] = min(effective_solar[h], float(hours[h].solar_kwh) * factor)
+                # Overlapping reductions multiply. That is never looser than
+                # "lowest factor wins", so the plan stays valid whichever rule
+                # the judge applies.
+                effective_solar[h] = round(effective_solar[h] * factor, 6)
 
         elif kind == "minimum_battery_reserve" and apply_reserve:
-            reserve = float(adjustment["minimum_energy_kwh"])
+            reserve = value
             for h in listed:
                 # Highest reserve wins.
                 floor[h] = max(floor[h], reserve)
@@ -74,7 +108,7 @@ def build_constraints(
                 discharge_allowed[h] = False
 
         elif kind == "max_grid_window" and apply_grid_cap:
-            cap = float(adjustment["max_grid_kwh"])
+            cap = value
             for h in listed:
                 # Lowest cap wins.
                 grid_cap[h] = cap if grid_cap[h] is None else min(float(grid_cap[h]), cap)

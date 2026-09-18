@@ -1,0 +1,46 @@
+# The image needs exactly two things from the context: requirements.txt and app/.
+# Everything else is excluded so a secret or a 300 KB PDF can never ride along.
+
+# Secrets
+.env
+.env.*
+
+# Virtualenvs
+.venv
+venv
+
+# VCS / CI
+.git
+.github
+.gitignore
+
+# Not needed at runtime
+ProblemSet
+tests
+scripts
+render.yaml
+requirements-dev.txt
+*.md
+
+# Python caches (patterns are root-anchored, hence the ** forms)
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+.pytest_cache
+**/.pytest_cache
+
+# Solver artifacts
+*.lp
+*.mps
+*.sol
+**/*.lp
+**/*.mps
+**/*.sol
+
+# OS / editor
+.DS_Store
+**/.DS_Store
+.idea
+.vscode
+.puku

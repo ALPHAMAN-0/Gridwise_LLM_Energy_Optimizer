@@ -8,10 +8,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 # Tolerance the judge uses for float comparisons (kWh and BDT alike).
 TOLERANCE = 0.01
+
+# Error type raised for well-formed but physically impossible requests (HTTP 422).
+SEMANTIC_ERROR = "gridwise_semantic"
 
 BatteryAction = Literal["charge", "discharge", "idle"]
 
@@ -47,20 +51,37 @@ _STRICT = ConfigDict(extra="ignore", allow_inf_nan=False)
 class HourEntry(BaseModel):
     model_config = _STRICT
 
-    hour: int = Field(ge=0, le=23)
-    demand_kwh: float = Field(ge=0)
-    solar_kwh: float = Field(ge=0)
-    tariff_bdt_per_kwh: float
+    # strict: a JSON number is required. Lax mode would accept "12.5" and true.
+    hour: int = Field(ge=0, le=23, strict=True)
+    demand_kwh: float = Field(ge=0, strict=True)
+    solar_kwh: float = Field(ge=0, strict=True)
+    tariff_bdt_per_kwh: float = Field(strict=True)
 
 
 class Battery(BaseModel):
     model_config = _STRICT
 
-    capacity_kwh: float = Field(ge=0)
-    initial_energy_kwh: float = Field(ge=0)
-    minimum_energy_kwh: float = Field(ge=0)
-    max_charge_kwh_per_hour: float = Field(ge=0)
-    max_discharge_kwh_per_hour: float = Field(ge=0)
+    capacity_kwh: float = Field(ge=0, strict=True)
+    initial_energy_kwh: float = Field(ge=0, strict=True)
+    minimum_energy_kwh: float = Field(ge=0, strict=True)
+    max_charge_kwh_per_hour: float = Field(ge=0, strict=True)
+    max_discharge_kwh_per_hour: float = Field(ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def _state_is_reachable(self) -> "Battery":
+        # The day must end at initial_energy_kwh, so an initial level outside
+        # [minimum, capacity] has no valid plan at all. main.py maps this error
+        # type to 422: well-formed JSON, semantically impossible scenario.
+        if (
+            self.minimum_energy_kwh > self.capacity_kwh + TOLERANCE
+            or self.initial_energy_kwh > self.capacity_kwh + TOLERANCE
+            or self.initial_energy_kwh < self.minimum_energy_kwh - TOLERANCE
+        ):
+            raise PydanticCustomError(
+                SEMANTIC_ERROR,
+                "battery must satisfy minimum_energy_kwh <= initial_energy_kwh <= capacity_kwh",
+            )
+        return self
 
 
 class OptimizeRequest(BaseModel):
@@ -70,6 +91,13 @@ class OptimizeRequest(BaseModel):
     operator_notes: list[str] = Field(min_length=1, max_length=3)
     hours: list[HourEntry] = Field(min_length=24, max_length=24)
     battery: Battery
+
+    @field_validator("operator_notes")
+    @classmethod
+    def _notes_are_not_blank(cls, v: list[str]) -> list[str]:
+        if any(not note.strip() for note in v):
+            raise ValueError("operator_notes must be non-empty strings")
+        return v
 
     @field_validator("hours")
     @classmethod

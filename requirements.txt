@@ -1,0 +1,10 @@
+# Runtime dependencies. Exact pins: the Docker image must rebuild identically.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+httpx==0.28.1
+# PuLP bundles the CBC binary (glibc-linked, so the image must stay Debian-based).
+PuLP==3.3.2
+# HiGHS is the in-process fallback if the CBC subprocess cannot run.
+highspy==1.15.1
+python-dotenv==1.2.3

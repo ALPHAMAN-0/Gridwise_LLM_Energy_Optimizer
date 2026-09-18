@@ -1,0 +1,30 @@
+# Render blueprint: one free Docker web service built from ./Dockerfile.
+# Render injects PORT at runtime; the image's CMD honours it.
+services:
+  - type: web
+    name: gridwise-llm-energy-optimizer
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Secret: sync false means the value is typed into the dashboard, never stored here.
+      - key: GEMINI_API_KEYS
+        sync: false
+      - key: GEMINI_MODELS
+        value: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite
+      - key: GEMINI_THINKING_LEVEL
+        value: low
+      - key: LLM_CALL_TIMEOUT_S
+        value: "7"
+      - key: LLM_TOTAL_BUDGET_S
+        value: "14"
+      - key: LLM_MAX_CONCURRENCY
+        value: "4"
+      - key: CACHE_SIZE
+        value: "512"
+      - key: LOG_LEVEL
+        value: INFO
