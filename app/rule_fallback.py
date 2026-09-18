@@ -65,13 +65,15 @@ _NEGATION = (
     r"(?:do\s+not|don't|must\s+not|may\s+not|cannot|can't|should\s+not|shall\s+not|never|no"
     r"|nothing\s+may\s+be)"
 )
+# "No charging restrictions today" announces the absence of a ban.
+_NOT_A_BAN = r"(?!\s+(?:or\s+\w+\s+)?(?:restrictions?|limits?|bans?|constraints?))"
 # \bcharg... cannot match inside "discharg...": there is no word boundary there.
 _NO_CHARGE = re.compile(
     rf"\b(?:charger|rectifier|charging|charge\s+(?:circuit|path))\b[^.;]{{0,40}}?\b{_BLOCKED}"
-    rf"|\b{_NEGATION}\s+(?:battery\s+)?(?:charg(?:e|ing)|recharg\w+|top(?:ping)?[\s-]?up)\b"
+    rf"|\b{_NEGATION}\s+(?:battery\s+)?(?:charg(?:e|ing)|recharg\w+|top(?:ping)?[\s-]?up)\b{_NOT_A_BAN}"
 )
 _NO_DISCHARGE = re.compile(
-    rf"\b{_NEGATION}\s+(?:battery\s+)?discharg\w+"
+    rf"\b{_NEGATION}\s+(?:battery\s+)?discharg\w+\b{_NOT_A_BAN}"
     rf"|\bdischarg\w+\b[^.;]{{0,40}}?\b{_BLOCKED}"
     rf"|\b{_NEGATION}\s+(?:be\s+)?draw\w*\s+(?:from|on|down)\s+(?:the\s+)?(?:battery|batteries|storage)"
     rf"|\b(?:battery|inverter|storage)\s+(?:output|export)\b[^.;]{{0,40}}?\b{_BLOCKED}"
