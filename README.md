@@ -15,7 +15,7 @@ before it is returned. The service always answers with a valid plan, even when t
 | Source | https://github.com/ALPHAMAN-0/Gridwise_LLM_Energy_Optimizer |
 | Container image | `ghcr.io/alphaman-0/gridwise-llm-energy-optimizer:v1.0.0` |
 
-Measured latency: <to be filled from scripts/run_samples.py>
+Measured latency (local server, live Gemini free tier, 10 public samples, 2026-09-18): **p50 1.56 s, p95 1.94 s, max 1.96 s**; the LP itself takes about 30 ms per request. Reproduce with `python scripts/run_samples.py --url http://localhost:8000`.
 
 Contents: [Architecture](#architecture) | [Why this split](#why-this-split) | [Guardrails](#guardrails) |
 [Optimization method](#optimization-method) | [Reliability](#reliability) | [Quickstart](#quickstart-local) |
@@ -236,7 +236,7 @@ optimal cost; the sample pack states that equivalent optimal schedules are accep
 
 | Situation | Behaviour |
 |---|---|
-| Judge limit is 30 s per request | LLM work is capped at **14 s total** (`LLM_TOTAL_BUDGET_S`) and **7 s per call** (`LLM_CALL_TIMEOUT_S`), leaving more than half the limit for solving, validation, and network. |
+| Judge limit is 30 s per request | LLM work is capped at **18 s total** (`LLM_TOTAL_BUDGET_S`) and **7 s per call** (`LLM_CALL_TIMEOUT_S`), leaving more than half the limit for solving, validation, and network. |
 | Model overloaded, 429, 5xx, or timeout | Model cascade (`GEMINI_MODELS`, in order) crossed with key rotation (`GEMINI_API_KEYS`), all inside the global budget. |
 | Same scenario sent again | In-memory cache of *validated* interpretations (`CACHE_SIZE` entries): no second LLM call. Failed interpretations are never cached. |
 | LLM fully down, or no key configured | **HTTP 200**. Every note is reported as `no_op` with an explanation saying the interpreter was unavailable, and a valid optimized plan is still returned. |
