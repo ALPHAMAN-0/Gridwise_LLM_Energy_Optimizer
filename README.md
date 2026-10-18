@@ -11,11 +11,12 @@ before it is returned. The service always answers with a valid plan, even when t
 
 ```mermaid
 flowchart LR
-    A[User] --> B[Gridwise Llm Energy Optimizer]
-    B --> C{Logic}
-    C --> D[(Data)]
-    C --> E[Output]
-    D --> C
+    Client[Client] -->|HTTP| API[FastAPI app]
+    API -->|query/mutate| DB[(SQLite/Postgres)]
+    API --> Models[Pydantic models]
+    API --> Routes[Route handlers]
+    Routes --> DB
+    Models --> Routes
 ```
 
 
