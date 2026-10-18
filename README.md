@@ -7,6 +7,18 @@ code normalizes and guards that output; a linear program then produces the minim
 grid/solar/battery schedule that honours every directive; and an independent validator replays the plan
 before it is returned. The service always answers with a valid plan, even when the LLM is unreachable.
 
+## Architecture / How it Works
+
+```mermaid
+flowchart LR
+    A[User] --> B[Gridwise Llm Energy Optimizer]
+    B --> C{Logic}
+    C --> D[(Data)]
+    C --> E[Output]
+    D --> C
+```
+
+
 | | |
 |---|---|
 | Live base URL | `<PUBLIC_BASE_URL>` |
