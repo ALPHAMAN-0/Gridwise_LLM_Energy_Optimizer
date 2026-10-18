@@ -1,6 +1,4 @@
 # Secrets — never commit
-.env
-.env.*
 !.env.example
 
 # Python
@@ -20,4 +18,5 @@ __pycache__/
 .DS_Store
 .puku/
 .idea/
-.vscode/
+config.bat
+node_modules
